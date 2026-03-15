@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+const String kAdminEmail = 'dioneayou@gmail.com';
+
 class AuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -11,14 +13,14 @@ class AuthService {
         email: email,
         password: password,
       );
+      if (email.toLowerCase() == kAdminEmail.toLowerCase()) {
+        await _ensureAdminDocument(email);
+      }
       return {'success': true, 'message': 'Connexion réussie'};
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'user-not-found') {
-        return {'success': false, 'message': 'Cet email n\'existe pas'};
-      } else if (e.code == 'wrong-password') {
-        return {'success': false, 'message': 'Mot de passe incorrect'};
-      }
-      return {'success': false, 'message': 'Erreur de connexion'};
+      return {'success': false, 'message': _authErrorMessage(e.code)};
+    } catch (_) {
+      return {'success': false, 'message': 'Erreur de connexion inattendue'};
     }
   }
 
@@ -29,44 +31,71 @@ class AuthService {
     String telephone,
   ) async {
     try {
-      // Créer le compte directement - Firebase va lever une exception si l'email existe déjà
-      UserCredential userCredential =
+      final bool isAdmin = email.toLowerCase() == kAdminEmail.toLowerCase();
+      final UserCredential cred =
           await _firebaseAuth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
-
-      // Stocker les infos supplémentaires dans Firestore
-      await _firestore.collection('users').doc(userCredential.user!.uid).set({
+      await _firestore.collection('users').doc(cred.user!.uid).set({
         'nomComplet': nomComplet,
         'email': email,
         'telephone': telephone,
-        'dateCreation': DateTime.now(),
+        'isAdmin': isAdmin,
+        'dateCreation': FieldValue.serverTimestamp(),
       });
-
-      // sign out user so they must login manually (Firebase auto-signs in on create)
       await _firebaseAuth.signOut();
-
       return {'success': true, 'message': 'Compte créé avec succès'};
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'email-already-in-use') {
-        return {'success': false, 'message': 'Ce compte est déjà inscrit'};
-      } else if (e.code == 'weak-password') {
-        return {'success': false, 'message': 'Mot de passe trop faible'};
-      } else if (e.code == 'invalid-email') {
-        return {'success': false, 'message': 'Email invalide'};
-      }
-      return {'success': false, 'message': 'Erreur lors de l\'inscription: ${e.message}'};
-    } catch (e) {
-      return {'success': false, 'message': 'Erreur inattendue lors de l\'inscription'};
+      return {'success': false, 'message': _authErrorMessage(e.code)};
+    } catch (_) {
+      return {'success': false, 'message': "Erreur inattendue lors de l'inscription"};
     }
   }
 
   Future<void> logout() async {
     try {
       await _firebaseAuth.signOut();
-    } catch (e) {
-      // Erreur de déconnexion
+    } catch (_) {}
+  }
+
+  Future<void> _ensureAdminDocument(String email) async {
+    final uid = _firebaseAuth.currentUser?.uid;
+    if (uid == null) return;
+    final doc = await _firestore.collection('users').doc(uid).get();
+    if (!doc.exists) {
+      await _firestore.collection('users').doc(uid).set({
+        'nomComplet': 'Administrateur',
+        'email': email,
+        'telephone': '',
+        'isAdmin': true,
+        'dateCreation': FieldValue.serverTimestamp(),
+      });
+    } else if (doc.data()?['isAdmin'] != true) {
+      await _firestore.collection('users').doc(uid).update({'isAdmin': true});
+    }
+  }
+
+  String _authErrorMessage(String code) {
+    switch (code) {
+      case 'user-not-found':
+        return 'Aucun compte associé à cet email';
+      case 'wrong-password':
+        return 'Mot de passe incorrect';
+      case 'invalid-credential':
+        return 'Email ou mot de passe incorrect';
+      case 'email-already-in-use':
+        return 'Ce compte est déjà inscrit';
+      case 'weak-password':
+        return 'Le mot de passe doit contenir au moins 6 caractères';
+      case 'invalid-email':
+        return 'Adresse email invalide';
+      case 'too-many-requests':
+        return 'Trop de tentatives. Réessayez dans quelques minutes';
+      case 'user-disabled':
+        return 'Ce compte a été désactivé';
+      default:
+        return 'Une erreur est survenue. Veuillez réessayer';
     }
   }
 }

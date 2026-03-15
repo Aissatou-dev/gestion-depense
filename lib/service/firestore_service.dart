@@ -76,6 +76,18 @@ class FirestoreService {
     return _categories.doc(id).delete();
   }
 
+  /// ----- user data -----
+  Future<Map<String, dynamic>?> getUserData() async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    DocumentSnapshot doc = await _db.collection('users').doc(uid).get();
+    return doc.data() as Map<String, dynamic>?;
+  }
+
+  Future<void> updateUserData(Map<String, dynamic> data) async {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    return _db.collection('users').doc(uid).update(data);
+  }
+
   /// ----- aggregates -----
   Future<double> totalExpenses() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
@@ -97,5 +109,35 @@ class FirestoreService {
       sum += (data['amount'] ?? 0) as num;
     }
     return sum;
+  }
+
+  /// ----- admin -----
+  Stream<QuerySnapshot> allUsers() {
+    return _db.collection('users').snapshots();
+  }
+
+  Stream<QuerySnapshot> allExpenses() {
+    return _expenses.orderBy('createdAt', descending: true).snapshots();
+  }
+
+  Stream<QuerySnapshot> allIncomes() {
+    return _incomes.orderBy('createdAt', descending: true).snapshots();
+  }
+
+  Future<void> deleteUserData(String userId) async {
+    // Delete user's expenses
+    var expensesSnap = await _expenses.where('userId', isEqualTo: userId).get();
+    for (var doc in expensesSnap.docs) {
+      await doc.reference.delete();
+    }
+
+    // Delete user's incomes
+    var incomesSnap = await _incomes.where('userId', isEqualTo: userId).get();
+    for (var doc in incomesSnap.docs) {
+      await doc.reference.delete();
+    }
+
+    // Delete user document
+    await _db.collection('users').doc(userId).delete();
   }
 }
